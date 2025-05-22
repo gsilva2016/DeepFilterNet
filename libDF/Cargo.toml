@@ -65,6 +65,10 @@ bin = [
 ]
 wav-utils = ["dep:ndarray", "dep:hound"]
 use-jemalloc = ["dep:jemallocator"]
+use-openvino = [
+  "dep:openvino",
+  "dep:lazy_static",
+]
 tract = [
   "transforms",
   "logging",
@@ -80,6 +84,7 @@ tract = [
 ]
 default-model = [] # Include default DFN3 model
 default-model-ll = [] # Include default DFN3 low latency model
+default-model-ov = [] # Include default OpenVINO model
 nightly-features = []
 capi = ["tract", "default-model", "dep:ndarray", "logging"]
 wasm = [
@@ -120,6 +125,8 @@ claxon = { version = "^0.4", optional = true }
 env_logger = { version = "0.11", optional = true }
 clap = { version = "4.0", optional = true, features = ["derive"] }
 rust-ini = { version = "^0.21", optional = true }
+openvino = { version = "0.8.0", optional = true }
+lazy_static = { version = "1.4.0", optional = true }
 tract-core = { version = "^0.21.4", optional = true }
 tract-onnx = { version = "^0.21.4", optional = true }
 tract-pulse = { version = "^0.21.4", optional = true }
@@ -130,6 +137,8 @@ wasm-bindgen = { version = "0.2.87", optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
 console_error_panic_hook = { version = "0.1.1", optional = true }
 js-sys = { version = "0.3", optional = true }
+#openvino = "0.8.0"
+zip = "1.1.4"
 
 
 [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]

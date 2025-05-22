@@ -1,0 +1,7 @@
+.include /etc/pulse/default.pa
+
+load-module module-null-sink sink_name=mic_denoised_out rate=48000
+load-module module-ladspa-sink sink_name=mic_raw_in sink_master=mic_denoised_out label=deep_filter_mono plugin=/home/intel-admin/gsi/noise-suppression/DeepFilterNet/target/release/libdeep_filter_ladspa.so control=100,0,0,0,0,0
+load-module module-loopback source=mic_denoised_out.monitor sink=mic_raw_in channels=1 source_dont_move=true sink_dont_move=true
+
+set-default-source mic_denoised_out.monitor
