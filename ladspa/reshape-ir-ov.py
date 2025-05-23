@@ -3,7 +3,7 @@ core = ov.Core()
 model_path = "./models_tmp/deepfilternet3/enc.xml"
 model = core.read_model(model_path)
 
-hop_size = 480
+hop_size = 1 # 480
 model.reshape({
     "feat_erb": ov.PartialShape((1, 1, hop_size, 32)), 
     "feat_spec": ov.PartialShape((1, 2, hop_size, 96))})

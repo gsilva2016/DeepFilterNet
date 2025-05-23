@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-#[cfg(feature = "timings")]
+//#[cfg(feature = "timings")]
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -39,7 +39,7 @@ pub struct DfParams {
 
 impl DfParams {
     pub fn new(compressed_file: PathBuf) -> Result<Self> {
-        panic!("DId I make ithere??? in DfP New");
+//        panic!("DId I make ithere??? in DfP New");
         let file_name = compressed_file.clone();
         let file_name_ostr = file_name.as_os_str();
         let file_name_str = file_name_ostr.to_str().unwrap();
@@ -379,9 +379,8 @@ impl DfTract {
         let hop_size = df_cfg.get("hop_size").unwrap().parse::<usize>()?;
 
         // load enc model
+        /*
         log::warn!("Start ENC MODE Compile");
-        //let mut core = CORE.lock().unwrap();
-        log::warn!("Core created....");
         let mut ovm = CORE.lock().unwrap() 
             .read_model_from_file(
                 "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/enc-static.xml",
@@ -396,14 +395,14 @@ impl DfTract {
         let mut enc = CORE.lock().unwrap()
             .compile_model(&ovm, DeviceType::CPU).unwrap();
         log::warn!("ENC model compiled!");
-        /*
-        let enc = init_encoder_from_read(
+*/
+        let mut enc = init_encoder_from_read(
             &dfp.enc_xml,
             &dfp.enc_bin,
             df_cfg, 
             ch, 
-            &mut CORE.lock().unwrap()); //.expect("Unable to load enc model.");
-        */
+            &mut CORE.lock().unwrap()).expect("Unable to load enc model.");
+
         //get_output_by_name
         let enc_e0 = enc.get_output_by_index(0)?;
         let enc_e1 = enc.get_output_by_index(1)?;
@@ -637,6 +636,7 @@ impl DfTract {
     ///     - gains: Gain estimates of shape `[n_ch, 1, 1, n_erb]`.
     ///     - coefs: Real-valued DF coefficients estimates of shape `[n_ch, 1, 1, n_erb, 2]`.
     pub fn process_raw(&mut self) -> Result<(f32, Option<Vec<f32>>, Option<Vec<f32>>)> {
+        let t0 = Instant::now();
         let spec = self.spec_buf.to_array_view()?;
         let ch = spec.len_of(Axis(0));
 
@@ -659,21 +659,32 @@ impl DfTract {
         unsafe {
             infer_request = Some(ENC.as_ref().unwrap().lock().unwrap().create_infer_request()?);
         }
-        let input_shape = ::openvino::Shape::new(&[1,1,self.hop_size as i64,32])?;
+        let input_shape = ::openvino::Shape::new(&[1,1,1,32])?;
         let element_type = ElementType::F32;
         let mut tensor_featerb = ::openvino::Tensor::new(element_type, &input_shape)?;
         let buffer = tensor_featerb.get_raw_data_mut()?;
+/*
         unsafe {
-            buffer.copy_from_slice(self.erb_buf.as_bytes());
+            log::warn!("ovbuffer {} == erb_buf {} vs cplx_buf {}", 
+                buffer.len(), 
+                self.erb_buf.as_bytes().len(), 
+                self.cplx_buf.as_bytes().len()
+            );
+            assert!(buffer.len() == self.erb_buf.as_bytes().len());
+        }
+*/
+        unsafe {            
+            buffer.copy_from_slice(&self.erb_buf.as_bytes());
         }
         let mut infer_request = infer_request.expect("");
         infer_request.set_tensor("feat_erb", &tensor_featerb)?;
 
-        let input_shape_spec = ::openvino::Shape::new(&[1,2,self.hop_size as i64,96])?;
+        let input_shape_spec = ::openvino::Shape::new(&[1,2,1,96])?;
         let mut tensor_featspec = ::openvino::Tensor::new(element_type, &input_shape_spec)?;
         let buffer_spec = tensor_featspec.get_raw_data_mut()?;
+        let permuted_cplx = TValue::from(self.cplx_buf.clone().into_tensor().permute_axes(&[0, 3, 1, 2])?);
         unsafe {
-            buffer_spec.copy_from_slice(self.cplx_buf.as_bytes());
+            buffer_spec.copy_from_slice(&permuted_cplx.as_bytes());
         }
         infer_request.set_tensor("feat_spec", &tensor_featspec)?;
         infer_request.infer()?;
@@ -701,6 +712,7 @@ impl DfTract {
             apply_gains,
             apply_df
         );
+
 
         let m = if apply_gains {
             let mut infer_request = None;
@@ -752,7 +764,11 @@ impl DfTract {
         } else {
             None
         };
-
+        let t1 = Instant::now();
+        log::warn!(
+            "Processed Inference in in {:.2}ms)",
+            (t1 - t0).as_secs_f32() * 1000.
+        );
         Ok((lsnr, m, coefs))
     }
 
@@ -1070,31 +1086,15 @@ fn init_encoder_from_read(
     n_ch: usize,
     core: &mut Core,
 ) -> Result<CompiledModel> {
-    //let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
-//    log::info!("init_encoder_from_read {}", m_bin.len());
-    //log::info!("init_encoder_from {}", hop_size);
 
-//    let mut core2 = Core::new().unwrap(); 
-    let ovm = core
+    let mut ovm = core
         .read_model_from_file(
             "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/enc-static.xml",
             "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/enc-static.bin",
         )
         .unwrap();
     let mut m = core.compile_model(&ovm, DeviceType::CPU)?;
-    log::warn!("ENC model compiled!");
     Ok(m)
-
-/*
-    let ovm = core
-        .read_model_from_buffer(
-            m_xml,
-            Some(&weights),
-        )
-        .unwrap();
-    let mut m = core.compile_model(&ovm, DeviceType::CPU)?;
-    Ok(m)
-*/
 }
 
 fn init_erb_decoder_impl(
@@ -1107,107 +1107,15 @@ fn init_erb_decoder_impl(
     core: &mut Core,
 ) -> Result<CompiledModel> {
     log::debug!("Load OV ERB decoder.");
-    let weights = {
-        let weights = m_bin;
-        let shape = ::openvino::Shape::new(&[1, weights.len() as i64]).unwrap();
-        let mut tensor = ::openvino::Tensor::new(ElementType::U8, &shape).unwrap();
-        let buffer = tensor.get_raw_data_mut().unwrap();
-        tensor
-    };      
-    let ovm = core
-        .read_model_from_buffer(
-            m_xml,
-            Some(&weights),
+    let mut ovm = core
+        .read_model_from_file(
+            "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/erb_dec-static.xml",
+            "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/erb_dec-static.bin",
         )
         .unwrap();
     let mut m = core.compile_model(&ovm, DeviceType::CPU)?;
 
-    /** Exported model already knows these shapes
-    //let s = m.symbol_table.sym("S");
-    let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
-    let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
-    let n_hidden = layer_width * nb_erb / 4;
-
-    let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
-    let e3f = nb_erb / 4;
-    let e3 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, e3f));
-    let e2 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, e3f));
-    let e1f = nb_erb / 2;
-    let e1 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, e1f));
-    let e0 = InferenceFact::dt_shape(
-        f32::datum_type(),
-        shapefactoid!(n_ch, layer_width, s, nb_erb),
-    );
-    log::debug!(
-        "ERB decoder input: \n emb [{:?}]\n e3  [{:?}]\n e2  [{:?}]\n e1  [{:?}]\n e0  [{:?}]",
-        emb.shape,
-        e3.shape,
-        e2.shape,
-        e1.shape,
-        e0.shape
-    );
-    */
-
-    /* need to add AVG op into OV IR...use none for now
-    let mut output_name = "m".to_string();
-
-    m = m
-        .with_input_fact(0, emb)?
-        .with_input_fact(1, e3)?
-        .with_input_fact(2, e2)?
-        .with_input_fact(3, e1)?
-        .with_input_fact(4, e0)?
-        .with_input_names(["emb", "e3", "e2", "e1", "e0"])?;
-    // .with_output_names([output_name])?;
-
-    m.analyse(true)?;
-
-    let mut m = m.into_typed()?;
-
-    m.declutter()?;
-    let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
-    let mut m = pulsed.into_typed()?;
-    log::info!("Init ERB decoder");
-
-    if let Some(r) = mask_reduction {
-        let outlets = m.output_outlets()?;
-        let mask_outlet = outlets[0];
-        let ch_axis = 0;
-        match r {
-            ReduceMask::MAX => {
-                output_name = "reduce_mask_max".to_string();
-                m.wire_node(
-                    "reduce_mask_max",
-                    ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Max),
-                    &[mask_outlet],
-                )?;
-            }
-            ReduceMask::MEAN => {
-                let sum = m.wire_node(
-                    "reduce_mask_sum".to_string(),
-                    ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Sum),
-                    &[mask_outlet],
-                )?[0];
-                let ch_i = m
-                    .add_const(
-                        "ch".to_string(),
-                        Tensor::from_shape(&[1, 1, 1, 1], &[1. / n_ch as f32])?,
-                    )
-                    .unwrap();
-                output_name = "reduce_mask_div_ch".to_string();
-                m.wire_node(
-                    "reduce_mask_div_ch",
-                    tract_core::ops::math::mul(),
-                    &[sum, ch_i],
-                )?;
-            }
-            _ => (),
-        }
-    }
-    m = m.with_output_names(&[output_name])?;
-
-    let m = m.into_optimized()?;
-    */
+    /* TODO: need to add AVG op into OV IR...use none for now */
 
     Ok(m)
 }
@@ -1247,53 +1155,13 @@ fn init_df_decoder_impl(
     core: &mut Core
 ) -> Result<CompiledModel> {
     log::debug!("Load OV DF decoder.");
-    let weights = {
-        let weights = m_bin;
-        let shape = ::openvino::Shape::new(&[1, weights.len() as i64]).unwrap();
-        let mut tensor = ::openvino::Tensor::new(ElementType::U8, &shape).unwrap();
-        let buffer = tensor.get_raw_data_mut().unwrap();
-        tensor
-    };
-    let ovm = core
-        .read_model_from_buffer(
-            m_xml,
-            Some(&weights),
+    let mut ovm = core
+        .read_model_from_file(
+            "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/df_dec-static.xml",
+            "/home/intel-admin/gsi/noise-suppression/DeepFilterNet/models/df_dec-static.bin",
         )
         .unwrap();
     let mut m = core.compile_model(&ovm, DeviceType::CPU)?;
-
-    /* All below built into OV IR model
-    let s = m.symbol_table.sym("S");
-    let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
-    let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
-    let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
-    let n_hidden = layer_width * nb_erb / 4;
-
-    let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
-    let c0 = InferenceFact::dt_shape(
-        f32::datum_type(),
-        shapefactoid!(n_ch, layer_width, s, nb_df),
-    );
-
-    log::debug!(
-        "ERB decoder input: \n emb [{:?}]\n c0  [{:?}]",
-        emb.shape,
-        c0.shape,
-    );
-    m = m
-        .with_input_fact(0, emb)?
-        .with_input_fact(1, c0)?
-        .with_input_names(["emb", "c0"])?
-        .with_output_names(["coefs"])?;
-
-    m.analyse(true)?;
-    let mut m = m.into_typed()?;
-
-    m.declutter()?;
-    let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
-    log::info!("Init DF decoder");
-    let m = pulsed.into_typed()?.into_optimized()?;
-    */
     Ok(m)
 }
 /*
